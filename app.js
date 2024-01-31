@@ -131,7 +131,8 @@ const fetchOrders = async (cursor = null, allOrdersLineItems = [], config) => {
     }
 
     responseData = await res.json();
-    console.log(responseData.orders.length)
+
+    
     //const lineItems = await parseLineItems(responseData.orders)
     allOrdersLineItems.push(...responseData.orders);
 
