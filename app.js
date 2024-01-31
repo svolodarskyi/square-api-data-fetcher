@@ -1,17 +1,18 @@
+const { create } = require('domain');
 
 require('dotenv').config()
 
 const config = {
   locationId: process.env.LOCATION_ID,
-  pageLimit: '100',
+  pageLimit: 1000,
   baseApiUrl: 'https://connect.squareup.com/v2',
   headerObj: new Headers({
     "Square-Version": "2024-01-18",
     "Authorization": `Bearer ${process.env.SQUARE_PAT}`,
     "Content-Type": "application/json",
   }),
-  startTime: new Date('2023-07-24T00:00:00.000-07:00').toISOString(),
-  endTime: new Date('2024-01-24T21:00:00.000-07:00').toISOString(),
+  startTime: new Date('2022-12-31T00:00:00.000-07:00').toISOString(),
+  endTime: new Date('2024-01-01T21:00:00.000-07:00').toISOString(),
 };
 
 
@@ -47,6 +48,7 @@ const parsePayments = async () => {
     return pmts.map((pmt) => ({
       created_at: pmt?.created_at ?? null,
       updated_at: pmt?.updated_at ?? null,
+      status: pmt?.status ?? null,
       amount_money: pmt?.amount_money?.amount ? pmt.amount_money.amount / 100 : null,
       source_type: pmt?.source_type ?? null,
       currency: pmt?.amount_money?.currency ?? null,
@@ -60,20 +62,101 @@ const parsePayments = async () => {
   }
 };
 
+const parseLineItems = async(orders) => {
+  let allLineItems = []
+  for (let i = 0; i < orders.length; i++) {
+    const order = orders[i];
+    const { id, created_at, source } = order;
+    if(order.line_items) {
+      const lineItems = order.line_items.map((item) => ({
+        id,
+        created_at,
+        source: source?.name ?? null,
+        uid: item.uid,
+        catalog_object_id: item?.catalog_object_id ?? null,
+        catalog_version: item?.catalog_version ?? null,
+        quantity: item?.quantity ?? null,
+        name: item?.name ?? null,
+        currency: item?.base_price_money?.currency ?? null,
+        base_price_money: item?.base_price_money?.amount / 100 ?? null,
+        gross_sales_money: item?.gross_sales_money?.amount / 100 ?? null,
+        total_discount_money: item?.total_discount_money?.amount / 100 ?? null,
+        total_money: item?.total_money?.amount / 100 ?? null,
+        state: item?.state ?? null,
+        item_type: item?.item_type ?? null,
+      }));
+      allLineItems.push(...lineItems);
+  }
+  }
+  return allLineItems
+}
 
-const getOrderIds = async () => {
+const fetchOrders = async (cursor = null, allOrdersLineItems = [], config) => {
   try {
-    let pmts = await parsePayments();
-    // Filter is applied to remove any falsy values (like null or undefined)
-    let orderIds = pmts.map((pmt) => pmt.order_id).filter((orderId) => orderId); 
-    console.log(orderIds);
+    const requestUrl = `${config.baseApiUrl}/orders/search`;
+    const requestBody = {
+        location_ids: [
+          config.locationId
+        ],
+        return_entries: false,
+        query: {
+          filter: {
+            date_time_filter: {
+              created_at: {
+                end_at: config.endTime,
+                start_at: config.startTime
+              }
+            }
+          }
+        },
+        limit: config.pageLimit
+      }
+      
+    if (cursor !== null) {
+      requestBody.cursor = cursor;
+    }
+
+    const requestObj = new Request(requestUrl, {
+      method: "POST",
+      headers: config.headerObj,
+      body: JSON.stringify(requestBody)
+    });
+    const res = await fetch(requestObj);
+    
+    if (!res.ok) {
+      let errorData = await res.json()
+      const errorMessage = `Failed to fetch orders. Status: ${res.status}, Error Details: ${parseErrorDetails(errorData)}`;
+      console.error(errorMessage);
+      throw new Error(errorMessage);
+    }
+
+    responseData = await res.json();
+    console.log(responseData.orders.length)
+    //const lineItems = await parseLineItems(responseData.orders)
+    allOrdersLineItems.push(...responseData.orders);
+
+    if ('cursor' in responseData) {
+      const nextOrders = await fetchOrders(responseData.cursor, allOrdersLineItems, config);
+      return nextOrders;
+    } else {
+      // If there is no more cursor, return or process the accumulated data
+      return allOrdersLineItems;
+    }
   } catch (err) {
     console.log(err);
   }
 };
 
-getOrderIds()
+// Helper function to parse error details
+const parseErrorDetails = (errorData) => {
+  if (errorData.errors && errorData.errors.length > 0) {
+    return errorData.errors.map(error => error.detail).join(', ');
+  } else {
+    return 'Unknown error';
+  }
+};
 
+fetchOrders(null, [], config)
 
-
+//parse returns from orders
 
